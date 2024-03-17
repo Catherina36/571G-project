@@ -3,122 +3,136 @@ pragma solidity ^0.8.0;
 
 contract Charity {
     struct Donation {
-        string donatorName;
-        uint256 amount;
+        address donator;
+        uint amount;
     }
 
     struct Program {
-        address owner;
         string title;
         string description;
-        uint256 targetAmount;
-        uint256 collectedAmount;
-        uint256 deadline;
-        string image;
+        uint targetAmount;
+        uint collectedAmount;
+        uint deadline;
         Donation[] donations;
     }
 
-    mapping(string => address) public nameToAddress;
-    mapping(address => Program) public addressToProgram;
+    struct ProgramInfo {
+        string title;
+        string description;
+        uint targetAmount;
+        uint collectedAmount;
+        uint deadline;
+    }
 
-    event ReceiverAdded(string name, address receiverAddress, uint256 maxAmount);
-    event DonationMade(string donatorName, address receiverAddress, uint256 amount);
+    mapping(address => Program) public programs;
+    address[] public addresses;
+
+    event ReceiverAdded(address receiverAddress, uint targetAmount);
+    event DonationMade(
+        address donatorAddress,
+        address receiverAddress,
+        uint amount
+    );
 
     /**
-     * Add receiver method
-     * Invoke another contract that returns if the receiver is valid and how much it can receive
-     * If the receiver has no program, create a program for it.
-     * If it has a program, update the program's details if needed.
+     * Create a program
      */
-    function addReceiver(
-        string memory name,
+    function createProgram(
         address receiverAddress,
         string memory title,
         string memory description,
-        uint256 targetAmount,
-        uint256 deadline,
-        string memory image
+        uint deadline
     ) public {
+        // Validate arguments
         require(receiverAddress != address(0), "Invalid receiver address");
-        require(bytes(name).length > 0, "Name is required");
         require(bytes(title).length > 0, "Title is required");
         require(bytes(description).length > 0, "Description is required");
-        require(targetAmount > 0, "Target amount should be greater than zero");
         require(deadline > block.timestamp, "Deadline should be in the future");
 
-        // Invoke another contract to validate the receiver
-        // Assuming the contract returns true if the receiver is valid
-        bool isValidReceiver = validateReceiver(receiverAddress);
+        // Validate the program receiver
+        (bool isValidReceiver, uint targetAmount) = validateReceiver(
+            receiverAddress
+        );
         require(isValidReceiver, "Invalid receiver");
+        require(targetAmount > 0, "Target amount should be greater than zero");
 
-        nameToAddress[name] = receiverAddress;
+        // Create a program if the previous program has finished
+        Program storage program = programs[receiverAddress];
+        require(
+            program.collectedAmount >= program.targetAmount ||
+                block.timestamp >= program.deadline,
+            "Program is in progress"
+        );
+        program.title = title;
+        program.description = description;
+        program.targetAmount = targetAmount;
+        program.collectedAmount = 0;
+        program.deadline = deadline;
+        addresses.push(receiverAddress);
 
-        Program storage program = addressToProgram[receiverAddress];
-        if (program.owner == address(0)) {
-            // Create a new program
-            program.owner = receiverAddress;
-            program.title = title;
-            program.description = description;
-            program.targetAmount = targetAmount;
-            program.deadline = deadline;
-            program.image = image;
-        } else {
-            // Update the existing program
-            program.title = title;
-            program.description = description;
-            program.targetAmount = targetAmount;
-            program.deadline = deadline;
-            program.image = image;
-        }
-
-        emit ReceiverAdded(name, receiverAddress, targetAmount);
+        emit ReceiverAdded(receiverAddress, targetAmount);
     }
 
     /**
      * Send donation method.
-     * Check the remaining balance of receiver, return excessive money.
+     * Check the remaining balance of receiver, return excessive money to donator.
      * Then send the donation to the receiver
      */
-    function sendDonation(string memory donatorName, string memory receiverName) public payable {
-        require(bytes(donatorName).length > 0, "Donator name is required");
-        require(bytes(receiverName).length > 0, "Receiver name is required");
-        require(msg.value > 0.00000001, "Donation amount should be greater than zero");
+    function sendDonation(address receiverAddress) public payable {
+        require(msg.value >= 1, "Donation amount should be greater than 1 wei");
+        require(receiverAddress != address(0), "Invalid receiver");
 
-        address receiverAddress = nameToAddress[receiverName];
-        require(receiverAddress != address(0), "Invalid receiver name");
+        // Deny donation if targetAmount has been reached or deadline has passed
+        Program storage program = programs[receiverAddress];
+        require(
+            program.collectedAmount < program.targetAmount,
+            "Program has finished"
+        );
+        require(block.timestamp < program.deadline, "Deadline has passed");
 
-        uint256 maxAmount = addressToProgram[receiverAddress].targetAmount;
-        uint256 donationAmount = msg.value;
-
-        if (donationAmount > maxAmount - addressToProgram[receiverAddress].collectedAmount) {
-            uint256 excessAmount = donationAmount - (maxAmount - addressToProgram[receiverAddress].collectedAmount);
+        // Transfer excess amount back to donator
+        address donatorAddress = msg.sender;
+        uint donationAmount = msg.value;
+        uint receiverBalance = program.targetAmount - program.collectedAmount;
+        if (donationAmount > receiverBalance) {
+            uint excessAmount = donationAmount - receiverBalance;
             payable(msg.sender).transfer(excessAmount);
-            donationAmount = maxAmount - addressToProgram[receiverAddress].collectedAmount;
+            donationAmount = receiverBalance;
         }
 
-        addressToProgram[receiverAddress].collectedAmount += donationAmount;
-        addressToProgram[receiverAddress].donations.push(Donation(donatorName, donationAmount));
+        // Transfer donation amount to receiver
         payable(receiverAddress).transfer(donationAmount);
+        program.collectedAmount += donationAmount;
+        program.donations.push(Donation(donatorAddress, donationAmount));
 
-        emit DonationMade(donatorName, receiverAddress, donationAmount);
+        emit DonationMade(donatorAddress, receiverAddress, donationAmount);
     }
 
-    function getAllPrograms() public view returns (Program[] memory) {
-        Program[] memory programs = new Program[](nameToAddress.length);
-        uint256 index = 0;
-        for (address receiverAddress : nameToAddress) {
-            programs[index] = addressToProgram[receiverAddress];
-            index++;
+    function getAllPrograms() public view returns (ProgramInfo[] memory) {
+        ProgramInfo[] memory allPrograms = new ProgramInfo[](addresses.length);
+        for (uint i = 0; i < addresses.length; i++) {
+            Program storage program = programs[addresses[i]];
+            allPrograms[i] = ProgramInfo(
+                program.title,
+                program.description,
+                program.targetAmount,
+                program.collectedAmount,
+                program.deadline
+            );
         }
-        return programs;
+        return allPrograms;
     }
 
-    function getDonations(address receiverAddress) public view returns (Donation[] memory) {
-        return addressToProgram[receiverAddress].donations;
+    function getDonations(
+        address receiverAddress
+    ) public view returns (Donation[] memory) {
+        require(receiverAddress != address(0), "Invalid receiver");
+        return programs[receiverAddress].donations;
     }
 
-    function validateReceiver(address receiverAddress) private pure returns (bool) {
-        // Implement the actual validation logic here
-        return true;
+    function validateReceiver(
+        address receiverAddress
+    ) private pure returns (bool, uint) {
+        return (true, 100);
     }
 }
