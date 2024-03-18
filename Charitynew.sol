@@ -57,7 +57,7 @@ contract Charity {
         require(receiverAddress != address(0), "Invalid receiver address");
         require(bytes(title).length > 0, "Title is required");
         require(bytes(description).length > 0, "Description is required");
-        require(deadline > block.timestamp, "Deadline should be in the future");
+        require(block.timestamp < deadline, "Deadline should be in the future");
 
         // Validate the program receiver
         (bool isValidReceiver, uint targetAmount) = validateReceiver(
@@ -66,13 +66,14 @@ contract Charity {
         require(isValidReceiver, "Invalid receiver");
         require(targetAmount > 0, "Target amount should be greater than zero");
 
-        // Create a program if the previous program has finished
+        // Validate that the program is not active
         Program storage program = programs[receiverAddress];
         require(
-            program.collectedAmount >= program.targetAmount ||
-                block.timestamp >= program.deadline,
+            !program.active || block.timestamp >= program.deadline,
             "Program is in progress"
         );
+
+        // Create the program
         program.title = title;
         program.description = description;
         program.targetAmount = targetAmount;
@@ -86,9 +87,7 @@ contract Charity {
     }
 
     /**
-     * Send donation method.
-     * Check the remaining balance of receiver, return excessive money to donor.
-     * Then send the donation to the receiver
+     * Send donation to a program.
      */
     function sendDonation(address receiverAddress) public payable {
         require(msg.value >= 1, "Donation amount should be greater than 1 wei");
@@ -96,14 +95,10 @@ contract Charity {
 
         // Deny donation if targetAmount has been reached or deadline has passed
         Program storage program = programs[receiverAddress];
-        require(program.active != false, "Program is invalid");
-        require(
-            program.collectedAmount < program.targetAmount,
-            "Program has finished"
-        );
+        require(program.active, "Program is not active");
         require(block.timestamp < program.deadline, "Deadline has passed");
 
-        // Transfer excess amount back to donor
+        // Transfer excessive amount back to donor
         address donorAddress = msg.sender;
         uint donationAmount = msg.value;
         uint receiverBalance = program.targetAmount - program.collectedAmount;
@@ -111,6 +106,8 @@ contract Charity {
             uint excessAmount = donationAmount - receiverBalance;
             payable(msg.sender).transfer(excessAmount);
             donationAmount = receiverBalance;
+            // program deactivates when targetAmount is collected
+            program.active = false;
         }
 
         // Transfer donation amount to receiver
@@ -121,25 +118,33 @@ contract Charity {
         emit DonationMade(donorAddress, receiverAddress, donationAmount);
     }
 
-    /** 
+    /**
      * To end a program before its deadline
-    */
-    function completeProgram() public  returns (bool succ){
+     */
+    function completeProgram() public returns (bool succ) {
         Program storage program = programs[msg.sender];
+        require(program.active, "Program is not active");
+        require(block.timestamp < program.deadline, "Deadline has passed");
+
         program.active = false;
         emit projectCompleted(msg.sender, program.collectedAmount);
         return true;
     }
 
-    /** 
+    /**
      * To cancel a program before its deadline and return money back to donors
-    */
-    function cancelProgram() public  returns (bool succ){
-        //Donation storage donation = getDonations(msg.sender);
-        Program storage program = programs[msg.sender];
-        uint donorsNumber = program.donations.length;
+     */
+    function cancelProgram() public returns (bool succ) {
+        // Validate receiver is in addresses
 
-        for(uint i = 0; i< donorsNumber; i++){
+        Program storage program = programs[msg.sender];
+        require(block.timestamp < program.deadline, "Deadline has passed");
+
+        // !!! can not directly use program.donations because it includes donations
+        // in previous programs
+
+        uint donorsNumber = program.donations.length;
+        for (uint i = 0; i < donorsNumber; i++) {
             address donor = program.donations[i].donor;
             uint value = program.donations[i].amount;
             //refund to donors
@@ -179,6 +184,4 @@ contract Charity {
     ) private pure returns (bool, uint) {
         return (true, 100);
     }
-
-
 }
