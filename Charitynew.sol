@@ -46,14 +46,13 @@ contract Charity {
      * Create a program
      */
     function createProgram(
-        address receiverAddress,
         string memory title,
         string memory description,
         string memory image,
-        //uint targetAmount,
         uint deadline
     ) public {
         // Validate arguments
+        address receiverAddress = msg.sender;
         require(receiverAddress != address(0), "Invalid receiver address");
         require(bytes(title).length > 0, "Title is required");
         require(bytes(description).length > 0, "Description is required");
