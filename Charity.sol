@@ -8,7 +8,6 @@ contract Charity {
     }
 
     struct Program {
-        //address owner;
         string title;
         string description;
         uint targetAmount;
@@ -20,6 +19,8 @@ contract Charity {
     }
 
     struct ProgramInfo {
+        address receiverAddress;
+        uint index;
         string title;
         string description;
         uint targetAmount;
@@ -29,7 +30,7 @@ contract Charity {
         bool active;
     }
 
-    mapping(address => Program) public programs;
+    mapping(address => Program[]) public programs;
     address[] public addresses;
 
     event ReceiverAdded(address receiverAddress, uint targetAmount);
@@ -38,8 +39,8 @@ contract Charity {
         address receiverAddress,
         uint amount
     );
-    event projectCompleted(address receiverAddress, uint amount);
-    event projectCanceled(address receiverAddress, uint amount);
+    event programCompleted(address receiverAddress, uint amount);
+    event programCanceled(address receiverAddress, uint amount);
     event durationChanged(uint, uint);
 
     /**
@@ -53,34 +54,41 @@ contract Charity {
     ) public {
         // Validate arguments
         address receiverAddress = msg.sender;
-        require(receiverAddress != address(0), "Invalid receiver address");
+        require(msg.sender != address(0), "Invalid receiver address");
         require(bytes(title).length > 0, "Title is required");
         require(bytes(description).length > 0, "Description is required");
         require(block.timestamp < deadline, "Deadline should be in the future");
 
         // Validate the program receiver
         (bool isValidReceiver, uint targetAmount) = validateReceiver(
-            receiverAddress
+            msg.sender
         );
         require(isValidReceiver, "Invalid receiver");
         require(targetAmount > 0, "Target amount should be greater than zero");
 
-        // Validate that the program is not active
-        Program storage program = programs[receiverAddress];
-        require(
-            !program.active || block.timestamp >= program.deadline,
-            "Program is in progress"
-        );
+        // Validate that the last program is not active
+        Program[] storage programArray = programs[msg.sender];
+        if (programArray.length > 0) {
+            Program storage lastProgram = programArray[programArray.length - 1];
+            require(
+                !lastProgram.active || block.timestamp >= lastProgram.deadline,
+                "Program is in progress"
+            );
+        }
 
-        // Create the program
-        program.title = title;
-        program.description = description;
-        program.targetAmount = targetAmount;
-        program.collectedAmount = 0;
-        program.image = image;
-        program.deadline = deadline;
-        program.active = true;
-        addresses.push(receiverAddress);
+        // Create a new program
+        Program memory newProgram = Program(
+            title,
+            description,
+            targetAmount,
+            0,
+            deadline,
+            image,
+            new Donation[](0),
+            true // active: true
+        );
+        programArray.push(newProgram);
+        addresses.push(msg.sender);
 
         emit ReceiverAdded(receiverAddress, targetAmount);
     }
@@ -92,12 +100,14 @@ contract Charity {
         require(msg.value >= 1, "Donation amount should be greater than 1 wei");
         require(receiverAddress != address(0), "Invalid receiver");
 
-        // Deny donation if targetAmount has been reached or deadline has passed
-        Program storage program = programs[receiverAddress];
+        // Validate that the program is active
+        Program[] storage programArray = programs[receiverAddress];
+        require(programArray.length > 0, "No program");
+        Program storage program = programArray[programArray.length - 1];
         require(program.active, "Program is not active");
         require(block.timestamp < program.deadline, "Deadline has passed");
 
-        // Transfer excessive amount back to donor
+        // Transfer amount exceeding targetAmount back to donor
         address donorAddress = msg.sender;
         uint donationAmount = msg.value;
         uint receiverBalance = program.targetAmount - program.collectedAmount;
@@ -105,8 +115,7 @@ contract Charity {
             uint excessAmount = donationAmount - receiverBalance;
             payable(msg.sender).transfer(excessAmount);
             donationAmount = receiverBalance;
-            // program deactivates when targetAmount is collected
-            program.active = false;
+            program.active = false; // program deactivates
         }
 
         // Transfer donation amount to receiver
@@ -121,12 +130,14 @@ contract Charity {
      * To end a program before its deadline
      */
     function completeProgram() public returns (bool succ) {
-        Program storage program = programs[msg.sender];
+        Program[] storage programArray = programs[msg.sender];
+        require(programArray.length > 0, "No program");
+        Program storage program = programArray[programArray.length - 1];
         require(program.active, "Program is not active");
         require(block.timestamp < program.deadline, "Deadline has passed");
 
         program.active = false;
-        emit projectCompleted(msg.sender, program.collectedAmount);
+        emit programCompleted(msg.sender, program.collectedAmount);
         return true;
     }
 
@@ -134,48 +145,106 @@ contract Charity {
      * To cancel a program before its deadline and return money back to donors
      */
     function cancelProgram() public returns (bool succ) {
-        // Validate receiver is in addresses
-
-        Program storage program = programs[msg.sender];
+        Program[] storage programArray = programs[msg.sender];
+        require(programArray.length > 0, "No program");
+        Program storage program = programArray[programArray.length - 1];
         require(block.timestamp < program.deadline, "Deadline has passed");
 
-        // !!! can not directly use program.donations because it includes donations
-        // in previous programs
-
-        uint donorsNumber = program.donations.length;
-        for (uint i = 0; i < donorsNumber; i++) {
+        // xxxxxxxxxxxxxxxxxxxxxxxxxrefund to donors
+        // the money has already be transfered to receivers. cannot refund
+        for (uint i = 0; i < program.donations.length; i++) {
             address donor = program.donations[i].donor;
             uint value = program.donations[i].amount;
-            //refund to donors
             payable(donor).transfer(value);
         }
         program.active = false;
-        emit projectCanceled(msg.sender, program.collectedAmount);
+        emit programCanceled(msg.sender, program.collectedAmount);
         return true;
     }
 
-    function getAllPrograms() public view returns (ProgramInfo[] memory) {
-        ProgramInfo[] memory allPrograms = new ProgramInfo[](addresses.length);
+    /**
+     * Get one program.
+     */
+    function getProgram(
+        address receiverAddress,
+        uint index
+    ) public view returns (ProgramInfo memory) {
+        require(
+            programs[receiverAddress].length > 0,
+            "No programs for this address."
+        );
+        require(
+            index < programs[receiverAddress].length,
+            "Index out of bounds."
+        );
+
+        Program storage program = programs[receiverAddress][index];
+        ProgramInfo memory programInfo = ProgramInfo(
+            receiverAddress,
+            index,
+            program.title,
+            program.description,
+            program.targetAmount,
+            program.collectedAmount,
+            program.image,
+            program.deadline,
+            program.active
+        );
+        return programInfo;
+    }
+
+    function getAllProgramsCount() public view returns (uint) {
+        uint count = 0;
         for (uint i = 0; i < addresses.length; i++) {
-            Program storage program = programs[addresses[i]];
-            allPrograms[i] = ProgramInfo(
-                program.title,
-                program.description,
-                program.targetAmount,
-                program.collectedAmount,
-                program.image,
-                program.deadline,
-                program.active
-            );
+            count += programs[addresses[i]].length;
+        }
+        return count;
+    }
+
+    /**
+     * Get all programs.
+     */
+    function getAllPrograms() public view returns (ProgramInfo[] memory) {
+        ProgramInfo[] memory allPrograms = new ProgramInfo[](
+            getAllProgramsCount()
+        );
+        uint counter = 0;
+
+        for (uint i = 0; i < addresses.length; i++) {
+            for (
+                uint index = 0;
+                index < programs[addresses[i]].length;
+                index++
+            ) {
+                allPrograms[counter] = getProgram(addresses[i], index);
+                counter++;
+            }
         }
         return allPrograms;
     }
 
+    /**
+     * Get a program's donations.
+     */
     function getDonations(
-        address receiverAddress
+        address receiverAddress,
+        uint index
     ) public view returns (Donation[] memory) {
         require(receiverAddress != address(0), "Invalid receiver");
-        return programs[receiverAddress].donations;
+        require(programs[receiverAddress].length > 0, "No program");
+        require(
+            index < programs[receiverAddress].length,
+            "Index out of bounds"
+        );
+
+        Program storage program = programs[receiverAddress][index];
+        uint len = program.donations.length;
+        Donation[] memory donationArray = new Donation[](len);
+        for (uint i = 0; i < len; i++) {
+            donationArray[i] = program.donations[i];
+        }
+
+        return donationArray;
     }
 
     function validateReceiver(
