@@ -77,17 +77,14 @@ contract Charity {
         }
 
         // Create a new program
-        Program memory newProgram = Program(
-            title,
-            description,
-            targetAmount,
-            0,
-            deadline,
-            image,
-            new Donation[](0),
-            true // active: true
-        );
-        programArray.push(newProgram);
+        Program storage program = programArray.push();
+        program.title = title;
+        program.description = description;
+        program.targetAmount = targetAmount;
+        program.collectedAmount = 0;
+        program.deadline = deadline;
+        program.image = image;
+        program.active = true;
         addresses.push(msg.sender);
 
         emit ReceiverAdded(receiverAddress, targetAmount);
