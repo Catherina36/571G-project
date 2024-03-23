@@ -31,6 +31,7 @@ contract Charity {
     }
 
     mapping(address => Program[]) public programs;
+    mapping(address => bool) public addressExists;
     address[] public addresses;
 
     event ReceiverAdded(address receiverAddress, uint targetAmount);
@@ -61,13 +62,13 @@ contract Charity {
 
         // Validate the program receiver
         (bool isValidReceiver, uint targetAmount) = validateReceiver(
-            msg.sender
+            receiverAddress
         );
         require(isValidReceiver, "Invalid receiver");
         require(targetAmount > 0, "Target amount should be greater than zero");
 
         // Validate that the last program is not active
-        Program[] storage programArray = programs[msg.sender];
+        Program[] storage programArray = programs[receiverAddress];
         if (programArray.length > 0) {
             Program storage lastProgram = programArray[programArray.length - 1];
             require(
@@ -85,7 +86,10 @@ contract Charity {
         program.deadline = deadline;
         program.image = image;
         program.active = true;
-        addresses.push(msg.sender);
+        if (!addressExists[receiverAddress]) {
+            addresses.push(receiverAddress);
+            addressExists[receiverAddress] = true;
+        }
 
         emit ReceiverAdded(receiverAddress, targetAmount);
     }
@@ -153,6 +157,7 @@ contract Charity {
             address donor = program.donations[i].donor;
             uint value = program.donations[i].amount;
             payable(donor).transfer(value);
+            // xxxxxxx collectedAmount to 0
         }
         program.active = false;
         emit programCanceled(msg.sender, program.collectedAmount);
