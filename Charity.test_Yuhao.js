@@ -30,7 +30,7 @@ describe("Charity Contract", function () {
     
     const programs = await charity.getAllPrograms();
     //console.log(programs);
-    expect(programs.length).to.equal(4);
+    expect(programs.length).to.equal(2);
     expect(programs[1].title).to.equal("t2");
     expect(programs[1].description).to.equal("d2");
     expect(programs[1].image).to.equal("i2.png");
@@ -105,8 +105,9 @@ describe("Charity Contract", function () {
 
     // 取消项目
     donationAmount = ethers.parseUnits("1","wei");
-    await charity.sendDonation(owner.address, {value:donationAmount});
-    const tx = await charity.cancelProgram()
+    await charity.connect(donor).sendDonation(owner.address, {value:donationAmount});
+    returnAmount = donationAmount;
+    const tx = await charity.cancelProgram({value: returnAmount})
     await expect(tx).to.emit(charity,'programCanceled').withArgs(owner.address, 0);
 
     // 断言项目状态为非活动状态
@@ -128,7 +129,7 @@ describe("Charity Contract", function () {
     
     const allPrograms = await charity.getAllPrograms();
     console.log(allPrograms);
-    expect(allPrograms.length).to.equal(4);
+    expect(allPrograms.length).to.equal(2);
     const count = await charity.getAllProgramsCount();
     });
   });
