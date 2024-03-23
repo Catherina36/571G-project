@@ -45,7 +45,7 @@ contract Charity {
     event durationChanged(uint, uint);
 
     /**
-     * Create a program
+     * Receiver creates a program.
      */
     function createProgram(
         string memory title,
@@ -95,7 +95,7 @@ contract Charity {
     }
 
     /**
-     * Send donation to a program.
+     * Donor sends donation to a receiver's program.
      */
     function sendDonation(address receiverAddress) public payable {
         require(msg.value >= 1, "Donation amount should be greater than 1 wei");
@@ -128,9 +128,9 @@ contract Charity {
     }
 
     /**
-     * To end a program before its deadline
+     * Receiver ends a program before deadline
      */
-    function completeProgram() public returns (bool succ) {
+    function completeProgram() public returns (bool) {
         Program[] storage programArray = programs[msg.sender];
         require(programArray.length > 0, "No program");
         Program storage program = programArray[programArray.length - 1];
@@ -143,23 +143,30 @@ contract Charity {
     }
 
     /**
-     * To cancel a program before its deadline and return money back to donors
+     * Receiver cancels a program and return money back to donors
      */
-    function cancelProgram() public returns (bool succ) {
+    function cancelProgram() public payable returns (bool) {
         Program[] storage programArray = programs[msg.sender];
         require(programArray.length > 0, "No program");
         Program storage program = programArray[programArray.length - 1];
         require(block.timestamp < program.deadline, "Deadline has passed");
 
-        // xxxxxxxxxxxxxxxxxxxxxxxxxrefund to donors
-        // the money has already be transfered to receivers. cannot refund
-        for (uint i = 0; i < program.donations.length; i++) {
+        // Verify that the receiver has enough balance to refund all donations
+        require(
+            msg.value == program.collectedAmount,
+            "Wrong balance to refund donations"
+        );
+
+        // Refund to donors
+        for (uint i = program.donations.length - 1; i >= 0; i--) {
             address donor = program.donations[i].donor;
             uint value = program.donations[i].amount;
             payable(donor).transfer(value);
-            // xxxxxxx collectedAmount to 0
+            program.collectedAmount -= value;
+            program.donations.pop();
         }
         program.active = false;
+
         emit programCanceled(msg.sender, program.collectedAmount);
         return true;
     }
