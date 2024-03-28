@@ -158,7 +158,9 @@ contract Charity {
         );
 
         // Refund to donors
-        for (uint i = program.donations.length - 1; i >= 0; i--) {
+        require(program.donations.length > 0, "No donations in program");
+        for (uint i = program.donations.length; i > 0;) {
+            i--;
             address donor = program.donations[i].donor;
             uint value = program.donations[i].amount;
             payable(donor).transfer(value);
